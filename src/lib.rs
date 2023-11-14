@@ -1,7 +1,8 @@
 use core::fmt;
+use std::num::NonZeroU8;
 
 use chrono::{DateTime, Utc};
-use log::info;
+use log::{error, info};
 use thiserror::Error;
 
 #[derive(Debug)]
@@ -31,17 +32,59 @@ pub enum Error {
 }
 type Result<T> = std::result::Result<T, Error>;
 
-/*
-/// Get all dependency crate names from in Cargo.lock file that are on the dependency level `dependency_level`
-pub fn get_dependencies(dependency_level: Option<u8>, cargo_lock: & cargo_lock::Lockfile) -> Result<Vec<&str>> {
-    let tree = cargo_lock.dependency_tree()?;
+/// Get all crate names of transitive dependencies from in Cargo.lock file up to `dependency_level`
+pub fn get_dependencies(
+    dependency_level: Option<NonZeroU8>,
+    dependency_tree: &cargo_lock::dependency::Tree,
+) -> Vec<&str> {
     let mut crate_names = vec![];
 
     // initialize the worklist with the root nodes
-    let mut worklist = tree.graph().externals(petgraph::Direction::Incoming).collect();
+    let mut worklist: Vec<petgraph::prelude::NodeIndex> = dependency_tree
+        .graph()
+        .externals(petgraph::Direction::Incoming)
+        .collect();
 
-    //TODO
-}*/
+    let mut level: u8 = 0;
+    while !worklist.is_empty() {
+        let mut next_level_worklist = vec![];
+        // iterate all dependencies on the current level
+        for node_index in worklist {
+            let package = &dependency_tree.graph()[node_index];
+            crate_names.push(package.name.as_str());
+
+            // push the transitive dependencies on the next level to the worklist
+            for child in dependency_tree
+                .graph()
+                .neighbors_directed(node_index, petgraph::Direction::Outgoing)
+            {
+                next_level_worklist.push(child);
+            }
+        }
+        info!(
+            "dependencies on level {}: {}",
+            level,
+            crate_names.join(", ")
+        );
+        worklist = next_level_worklist;
+
+        if let Some(dependency_level) = dependency_level {
+            if level >= dependency_level.get() {
+                break;
+            }
+        }
+
+        level = match level.checked_add(1) {
+            Some(l) => l,
+            None => {
+                error!("more thatn 255 levels of dependencies found, aborting");
+                break;
+            }
+        };
+    }
+
+    crate_names
+}
 
 /// For every defined package in `cargo_lock`, find the version that has been published before `date`
 pub async fn get_downgraded_dependencies(
@@ -49,7 +92,7 @@ pub async fn get_downgraded_dependencies(
     date: DateTime<Utc>,
 ) -> Result<Vec<Package>> {
     let cratesio_api_client = crates_io_api::AsyncClient::new(
-        "downgrade crawler (https://github.com/obraunsdorf/)", // TODO link to github
+        "downgrade crawler (https://github.com/obraunsdorf/cargo-downgrade)", // TODO link to github
         std::time::Duration::from_millis(1000),
     )
     .unwrap();
