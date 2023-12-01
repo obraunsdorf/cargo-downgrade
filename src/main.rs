@@ -1,5 +1,5 @@
 use chrono::DateTime;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use error_reporter::Report;
 use std::{num::NonZeroU8, path::PathBuf};
 
@@ -8,13 +8,28 @@ struct CliArguments {
     /// Path to the Cargo.lock file.
     cargo_lock: Option<PathBuf>,
 
-    /// Date to which the dependencies should be downgraded. In RC 2822 format, e.g. "22 Feb 2021 23:16:09 GMT"
-    #[clap(long)]
+    /// Date to which the dependencies should be downgraded. In RFC 2822 format, e.g. "22 Feb 2021 23:16:09 GMT"
+    #[clap(long, short)]
     date: String,
 
-    /// Dependency level to which transitive dependencies of the crate should be downgraded.
-    #[clap(short = 'l', long)]
-    dependency_level: Option<NonZeroU8>,
+    #[clap(subcommand)]
+    modes: DowngradeModes,
+}
+
+#[derive(Subcommand, Debug)]
+enum DowngradeModes {
+    /// Downgrade all crate names of transitive dependencies in Cargo.lock file up to `dependency_level`
+    All {
+        /// Dependency level to which transitive dependencies of the crate should be downgraded.
+        dependency_level: Option<NonZeroU8>,
+    },
+
+    /// Downgrade a list of specific crates
+    This {
+        /// Comma-separated list of crate names to downgrade
+        #[clap(value_delimiter = ',', required = true)]
+        crates: Vec<String>,
+    },
 }
 
 #[tokio::main]
@@ -33,7 +48,12 @@ async fn main() {
     let cargo_lock = cargo_lock::Lockfile::load(lock_path).unwrap();
     let dependency_tree = cargo_lock.dependency_tree().unwrap();
 
-    let mut crate_names = downgrade::get_dependencies(args.dependency_level, &dependency_tree);
+    let mut crate_names = match &args.modes {
+        DowngradeModes::All { dependency_level } => {
+            downgrade::get_dependencies(*dependency_level, &dependency_tree)
+        }
+        DowngradeModes::This { crates } => crates.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
+    };
 
     // vector has to be sorted for dedup to work
     crate_names.sort();

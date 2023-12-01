@@ -15,7 +15,7 @@ pub struct Package {
 
 impl fmt::Display for Package {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} = \"{}\"", self.name, self.version)
+        write!(f, "{} = \"={}\"", self.name, self.version)
     }
 }
 
