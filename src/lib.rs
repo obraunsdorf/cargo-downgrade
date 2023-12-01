@@ -2,6 +2,7 @@ use core::fmt;
 use std::{collections::HashSet, num::NonZeroU8};
 
 use chrono::{DateTime, Utc};
+use crates_io_api::Version;
 use log::{error, info};
 use thiserror::Error;
 
@@ -27,8 +28,8 @@ pub enum Error {
     ParseCargoLock(#[from] cargo_lock::Error),
     #[error("Failed to fetch from crates.io")]
     Reqwest(#[from] crates_io_api::Error),
-    #[error("No version of crate {0} found before date. Oldest unyanked version is: {1}")]
-    VersionNotFound(String, String),
+    #[error("At least for one crate there was no appropriate version found")]
+    NoAppropriateVersion,
 }
 type Result<T> = std::result::Result<T, Error>;
 
@@ -97,6 +98,36 @@ pub fn get_dependencies(
     crate_names
 }
 
+fn find_appropriate_version(
+    crate_name: &str,
+    mut versions: Vec<Version>,
+    date: DateTime<Utc>,
+) -> std::result::Result<Package, String> {
+    // sort versions by release date
+    versions.sort_unstable_by_key(|version| version.updated_at);
+
+    // find the last version that has been published before `date`
+    match versions
+        .iter()
+        .rev()
+        .find(|version| version.updated_at < date && !version.yanked)
+    {
+        Some(version) => Ok(Package {
+            version: version.num.clone(),
+            name: (*crate_name).to_owned(),
+        }),
+        None => Err(format!(
+            "No version of crate {} found before date. Oldest unyanked version is: {}",
+            (*crate_name).to_owned(),
+            versions
+                .iter()
+                .find(|version| !version.yanked)
+                .map(|v| format!("{} ({})", v.num, v.updated_at.format("%Y-%m-%d")))
+                .unwrap_or_else(|| "no known versions at all?".to_owned()),
+        )),
+    }
+}
+
 /// For every defined package in `cargo_lock`, find the version that has been published before `date`
 pub async fn get_downgraded_dependencies(
     crate_names: &[&str],
@@ -119,32 +150,10 @@ pub async fn get_downgraded_dependencies(
     for crate_name in crate_names {
         info!("fetching infos for crate {}", crate_name);
         let crate_data = cratesio_api_client.get_crate(crate_name).await?;
-
-        // sort versions by release date
-        let mut versions = crate_data.versions;
-        versions.sort_unstable_by_key(|version| version.updated_at);
-
-        // find the last version that has been published before `date`
-        match versions
-            .iter()
-            .rev()
-            .find(|version| version.updated_at < date && !version.yanked)
-        {
-            Some(version) => {
-                downgraded_dependencies.push(Package {
-                    version: version.num.clone(),
-                    name: (*crate_name).to_owned(),
-                });
-            }
-            None => {
-                return Err(Error::VersionNotFound(
-                    (*crate_name).to_owned(),
-                    versions
-                        .iter()
-                        .find(|version| !version.yanked)
-                        .map(|v| format!("{} ({})", v.num, v.updated_at.format("%Y-%m-%d")))
-                        .unwrap_or_else(|| "no known versions at all?".to_owned()),
-                ));
+        match find_appropriate_version(crate_name, crate_data.versions, date) {
+            Ok(package) => downgraded_dependencies.push(package),
+            Err(err) => {
+                error!("{}", err);
             }
         }
     }

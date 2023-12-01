@@ -21,6 +21,7 @@ enum DowngradeModes {
     /// Downgrade all crate names of transitive dependencies in Cargo.lock file up to `dependency_level`
     All {
         /// Dependency level to which transitive dependencies of the crate should be downgraded.
+        #[clap(long, short = 'l')]
         dependency_level: Option<NonZeroU8>,
     },
 
