@@ -1,5 +1,5 @@
 use core::fmt;
-use std::num::NonZeroU8;
+use std::{collections::HashSet, num::NonZeroU8};
 
 use chrono::{DateTime, Utc};
 use log::{error, info};
@@ -36,8 +36,8 @@ type Result<T> = std::result::Result<T, Error>;
 pub fn get_dependencies(
     dependency_level: Option<NonZeroU8>,
     dependency_tree: &cargo_lock::dependency::Tree,
-) -> Vec<&str> {
-    let mut crate_names = vec![];
+) -> HashSet<&str> {
+    let mut crate_names = HashSet::new();
 
     // initialize the worklist with the root nodes
     let mut worklist: Vec<petgraph::prelude::NodeIndex> = dependency_tree
@@ -48,11 +48,11 @@ pub fn get_dependencies(
     let mut level: u8 = 0;
     while !worklist.is_empty() {
         let mut next_level_worklist = vec![];
-        let mut dependencies_on_level = vec![];
+        let mut dependencies_current_level = HashSet::new();
         // iterate all dependencies on the current level
         for node_index in worklist {
             let package: &cargo_lock::Package = &dependency_tree.graph()[node_index];
-            dependencies_on_level.push(package.name.as_str());
+            dependencies_current_level.insert(package.name.as_str());
             // push the transitive dependencies on the next level to the worklist
             for child in dependency_tree
                 .graph()
@@ -64,7 +64,11 @@ pub fn get_dependencies(
         info!(
             "dependencies on level {}: {}",
             level,
-            dependencies_on_level.join(", ")
+            String::from_iter(
+                dependencies_current_level
+                    .iter()
+                    .map(|s| format!("{}, ", s))
+            )
         );
 
         worklist = next_level_worklist;
@@ -73,11 +77,11 @@ pub fn get_dependencies(
             match dependency_level {
                 Some(dependency_level) => {
                     if level >= dependency_level.get() {
-                        return dependencies_on_level;
+                        return dependencies_current_level;
                     }
                 }
 
-                None => crate_names.extend(dependencies_on_level),
+                None => crate_names.extend(dependencies_current_level),
             }
         }
 
@@ -99,7 +103,8 @@ pub async fn get_downgraded_dependencies(
     date: DateTime<Utc>,
 ) -> Result<Vec<Package>> {
     info!(
-        "downgrading the following dependencies to {}: {}",
+        "downgrading the following {} dependencies to {}: {}",
+        crate_names.len(),
         date,
         crate_names.join(", ")
     );

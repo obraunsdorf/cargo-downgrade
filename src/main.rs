@@ -48,16 +48,20 @@ async fn main() {
     let cargo_lock = cargo_lock::Lockfile::load(lock_path).unwrap();
     let dependency_tree = cargo_lock.dependency_tree().unwrap();
 
-    let mut crate_names = match &args.modes {
+    let crate_names = match &args.modes {
         DowngradeModes::All { dependency_level } => {
             downgrade::get_dependencies(*dependency_level, &dependency_tree)
+                .into_iter()
+                .collect()
         }
-        DowngradeModes::This { crates } => crates.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
+        DowngradeModes::This { crates } => {
+            let mut crate_names = crates.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
+            // vector has to be sorted for dedup to work
+            crate_names.sort();
+            crate_names.dedup();
+            crate_names
+        }
     };
-
-    // vector has to be sorted for dedup to work
-    crate_names.sort();
-    crate_names.dedup();
 
     let datetime: DateTime<chrono::Utc> = DateTime::parse_from_rfc2822(&args.date)
         .unwrap()
