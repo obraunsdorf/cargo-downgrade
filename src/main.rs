@@ -33,7 +33,12 @@ async fn main() {
     let cargo_lock = cargo_lock::Lockfile::load(lock_path).unwrap();
     let dependency_tree = cargo_lock.dependency_tree().unwrap();
 
-    let crate_names = downgrade::get_dependencies(args.dependency_level, &dependency_tree);
+    let mut crate_names = downgrade::get_dependencies(args.dependency_level, &dependency_tree);
+
+    // vector has to be sorted for dedup to work
+    crate_names.sort();
+    crate_names.dedup();
+
     let datetime: DateTime<chrono::Utc> = DateTime::parse_from_rfc2822(&args.date)
         .unwrap()
         .with_timezone(&chrono::Utc);

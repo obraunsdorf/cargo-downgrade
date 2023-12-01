@@ -48,11 +48,11 @@ pub fn get_dependencies(
     let mut level: u8 = 0;
     while !worklist.is_empty() {
         let mut next_level_worklist = vec![];
+        let mut dependencies_on_level = vec![];
         // iterate all dependencies on the current level
         for node_index in worklist {
-            let package = &dependency_tree.graph()[node_index];
-            crate_names.push(package.name.as_str());
-
+            let package: &cargo_lock::Package = &dependency_tree.graph()[node_index];
+            dependencies_on_level.push(package.name.as_str());
             // push the transitive dependencies on the next level to the worklist
             for child in dependency_tree
                 .graph()
@@ -64,20 +64,27 @@ pub fn get_dependencies(
         info!(
             "dependencies on level {}: {}",
             level,
-            crate_names.join(", ")
+            dependencies_on_level.join(", ")
         );
+
         worklist = next_level_worklist;
 
-        if let Some(dependency_level) = dependency_level {
-            if level >= dependency_level.get() {
-                break;
+        if level > 0 {
+            match dependency_level {
+                Some(dependency_level) => {
+                    if level >= dependency_level.get() {
+                        return dependencies_on_level;
+                    }
+                }
+
+                None => crate_names.extend(dependencies_on_level),
             }
         }
 
         level = match level.checked_add(1) {
             Some(l) => l,
             None => {
-                error!("more thatn 255 levels of dependencies found, aborting");
+                error!("more than 255 levels of dependencies found, aborting");
                 break;
             }
         };
@@ -91,6 +98,11 @@ pub async fn get_downgraded_dependencies(
     crate_names: &[&str],
     date: DateTime<Utc>,
 ) -> Result<Vec<Package>> {
+    info!(
+        "downgrading the following dependencies to {}: {}",
+        date,
+        crate_names.join(", ")
+    );
     let cratesio_api_client = crates_io_api::AsyncClient::new(
         "downgrade crawler (https://github.com/obraunsdorf/cargo-downgrade)", // TODO link to github
         std::time::Duration::from_millis(1000),
@@ -126,8 +138,7 @@ pub async fn get_downgraded_dependencies(
                         .iter()
                         .find(|version| !version.yanked)
                         .map(|v| format!("{} ({})", v.num, v.updated_at.format("%Y-%m-%d")))
-                        .unwrap_or_else(|| "no known versions at all?".to_owned())
-                        .to_owned(),
+                        .unwrap_or_else(|| "no known versions at all?".to_owned()),
                 ));
             }
         }
